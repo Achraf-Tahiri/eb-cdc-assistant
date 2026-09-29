@@ -1,0 +1,26 @@
+test_authentication (__main__.ApiTests.test_authentication) ... ok
+test_bad_password (__main__.ApiTests.test_bad_password) ... ok
+test_blank_answer (__main__.ApiTests.test_blank_answer) ... ok
+test_blank_input (__main__.ApiTests.test_blank_input) ... ok
+test_blank_question (__main__.ApiTests.test_blank_question) ... ok
+test_cannot_create_empty_cycle (__main__.ApiTests.test_cannot_create_empty_cycle) ... ok
+test_cannot_skip_questions (__main__.ApiTests.test_cannot_skip_questions) ... ok
+test_concurrent_questions_and_answers (__main__.ApiTests.test_concurrent_questions_and_answers) ... ok
+test_concurrent_versions (__main__.ApiTests.test_concurrent_versions) ... ok
+test_correction_and_version (__main__.ApiTests.test_correction_and_version) ... ok
+test_draft_deletion_and_retention (__main__.ApiTests.test_draft_deletion_and_retention) ... ok
+test_duplicate_answer_rejected (__main__.ApiTests.test_duplicate_answer_rejected) ... ok
+test_full_workflow_two_questions (__main__.ApiTests.test_full_workflow_two_questions) ... ok
+test_internal_endpoints (__main__.ApiTests.test_internal_endpoints) ... ok
+test_missing_job_document (__main__.ApiTests.test_missing_job_document) ... ok
+test_no_questions_after_acceptance (__main__.ApiTests.test_no_questions_after_acceptance) ... ok
+test_no_questions_after_closure (__main__.ApiTests.test_no_questions_after_closure) ... ok
+test_no_send_without_provider (__main__.ApiTests.test_no_send_without_provider) ... ok
+test_null_content (__main__.ApiTests.test_null_content) ... ok
+test_provider_isolation (__main__.ApiTests.test_provider_isolation) ... ok
+test_wrong_role_and_invalid_transition (__main__.ApiTests.test_wrong_role_and_invalid_transition) ... ok
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.931s
+
+OK

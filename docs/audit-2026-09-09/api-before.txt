@@ -1,0 +1,147 @@
+test_authentication (__main__.ApiTests.test_authentication) ... FAIL
+test_bad_password (__main__.ApiTests.test_bad_password) ... ok
+test_blank_answer (__main__.ApiTests.test_blank_answer) ... FAIL
+test_blank_input (__main__.ApiTests.test_blank_input) ... FAIL
+test_blank_question (__main__.ApiTests.test_blank_question) ... FAIL
+test_cannot_create_empty_cycle (__main__.ApiTests.test_cannot_create_empty_cycle) ... FAIL
+test_cannot_skip_questions (__main__.ApiTests.test_cannot_skip_questions) ... FAIL
+test_correction_and_version (__main__.ApiTests.test_correction_and_version) ... ok
+test_draft_deletion_and_retention (__main__.ApiTests.test_draft_deletion_and_retention) ... ok
+test_full_workflow_two_questions (__main__.ApiTests.test_full_workflow_two_questions) ... ok
+test_internal_endpoints (__main__.ApiTests.test_internal_endpoints) ... ok
+test_missing_job_document (__main__.ApiTests.test_missing_job_document) ... FAIL
+test_no_questions_after_acceptance (__main__.ApiTests.test_no_questions_after_acceptance) ... FAIL
+test_no_questions_after_closure (__main__.ApiTests.test_no_questions_after_closure) ... FAIL
+test_no_send_without_provider (__main__.ApiTests.test_no_send_without_provider) ... FAIL
+test_null_content (__main__.ApiTests.test_null_content) ... FAIL
+test_provider_isolation (__main__.ApiTests.test_provider_isolation) ... ok
+test_wrong_role_and_invalid_transition (__main__.ApiTests.test_wrong_role_and_invalid_transition) ... ok
+
+======================================================================
+FAIL: test_authentication (__main__.ApiTests.test_authentication)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 49, in test_authentication
+    self.call('GET','/documents',None,expected=401)
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 403 != 401 : GET /documents: 
+
+======================================================================
+FAIL: test_blank_answer (__main__.ApiTests.test_blank_answer)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 104, in test_blank_answer
+    self.call('POST',f'/clarifications/{q}/resolve','projet',{'resolution':'  '},400)
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 200 != 400 : POST /clarifications/d71c456e-be93-457a-8025-2f2c02b8719b/resolve: {'documentReturned': True, 'resolved': True}
+
+======================================================================
+FAIL: test_blank_input (__main__.ApiTests.test_blank_input)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 99, in test_blank_input
+    self.call('POST','/documents',body={'title':'  ','docType':'EB'},expected=400)
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 200 != 400 : POST /documents: {'id': '4c622428-4149-4baa-a82b-a5d9feb1d161', 'title': '  ', 'docType': 'EB', 'projectCode': None, 'state': 'BROUILLON', 'provider': '', 'createdBy': 'Marie Métier', 'createdAt': '2026-09-09T10:18:35.805948268Z'}
+
+======================================================================
+FAIL: test_blank_question (__main__.ApiTests.test_blank_question)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 101, in test_blank_question
+    d=self.sent(); self.call('POST',f'/documents/{d}/clarifications','prestataire',{'question':'  '},400)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 200 != 400 : POST /documents/75237b4d-afb5-46f5-9e6b-d9fbfa801b31/clarifications: {'id': '9edb7fea-c122-4175-8798-ef2af2e5ef40', 'daysSinceProviderReceived': 0.0}
+
+======================================================================
+FAIL: test_cannot_create_empty_cycle (__main__.ApiTests.test_cannot_create_empty_cycle)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 89, in test_cannot_create_empty_cycle
+    d=self.sent(); self.action(d,'REQUEST_CLARIFICATION','prestataire',400)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 41, in action
+    return self.call('POST', f'/documents/{doc}/actions', role, {'action':action}, expected)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 200 != 400 : POST /documents/e1b30744-0bc3-4218-b2b5-98db19815119/actions: {'state': 'CLARIFICATION_DEMANDEE'}
+
+======================================================================
+FAIL: test_cannot_skip_questions (__main__.ApiTests.test_cannot_skip_questions)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 86, in test_cannot_skip_questions
+    d=self.sent(); self.question(d); self.action(d,'RESOLVE','projet',409)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 41, in action
+    return self.call('POST', f'/documents/{doc}/actions', role, {'action':action}, expected)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 200 != 409 : POST /documents/6f17c444-395b-498c-88d9-cf2c4944ae9d/actions: {'state': 'TRANSMIS_PRESTATAIRE'}
+
+======================================================================
+FAIL: test_missing_job_document (__main__.ApiTests.test_missing_job_document)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 106, in test_missing_job_document
+    self.call('POST','/rag/jobs',body={'documentId':str(uuid.uuid4()),'jobType':'COMPLETENESS_CHECK'},expected=404)
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 403 != 404 : POST /rag/jobs: 
+
+======================================================================
+FAIL: test_no_questions_after_acceptance (__main__.ApiTests.test_no_questions_after_acceptance)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 92, in test_no_questions_after_acceptance
+    self.call('POST',f'/documents/{d}/clarifications','prestataire',{'question':'Too late'},409)
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 200 != 409 : POST /documents/2c50fc1c-4503-45f5-a979-7dfc508c3ef4/clarifications: {'id': 'a4b27666-cc0d-4089-a642-b706dc54655e', 'daysSinceProviderReceived': 0.0}
+
+======================================================================
+FAIL: test_no_questions_after_closure (__main__.ApiTests.test_no_questions_after_closure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 95, in test_no_questions_after_closure
+    self.call('POST',f'/documents/{d}/clarifications','prestataire',{'question':'Too late'},409)
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 200 != 409 : POST /documents/4c3b2a9f-b970-4d43-9cd7-3ed645e00100/clarifications: {'id': '3dab2276-6b44-4869-8fb3-ea68b51b2cc8', 'daysSinceProviderReceived': 0.0}
+
+======================================================================
+FAIL: test_no_send_without_provider (__main__.ApiTests.test_no_send_without_provider)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 97, in test_no_send_without_provider
+    d=self.doc(None); self.action(d,'SUBMIT','metier'); self.action(d,'VALIDATE','projet'); self.action(d,'SEND','projet',409)
+                                                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 41, in action
+    return self.call('POST', f'/documents/{doc}/actions', role, {'action':action}, expected)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 200 != 409 : POST /documents/661c2963-6286-4703-a1df-45f5c4a39a6f/actions: {'state': 'TRANSMIS_PRESTATAIRE'}
+
+======================================================================
+FAIL: test_null_content (__main__.ApiTests.test_null_content)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 108, in test_null_content
+    d=self.doc(); self.call('PUT',f'/documents/{d}/versions',body={'content':None},expected=400)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/achraf/Downloads/eb-cdc-assistant-v3-final(1) (2)/eb-cdc-assistant-v3/scripts/test-api.py", line 35, in call
+    self.assertEqual(status, expected, f'{method} {path}: {data}')
+AssertionError: 403 != 400 : PUT /documents/e7ef0f50-f9ad-4875-b2a9-ed85540f8e38/versions: 
+
+----------------------------------------------------------------------
+Ran 18 tests in 1.298s
+
+FAILED (failures=11)

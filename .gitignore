@@ -1,0 +1,41 @@
+# Java / Maven
+backend/target/
+*.class
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Divers
+.DS_Store
+*.log
+
+.run/
+__pycache__/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# IDE and agent workspace state
+.idea/
+.vscode/
+.agents/
+.codex/
+
+# Personal internship reports and administrative deliverables
+/*.docx
+/livrables/
+
+# Local databases, exports and archives
+*.dump
+*.sql.gz
+*.zip
+*.tar.gz
+*.pyc

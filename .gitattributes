@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+# Preserve historical audit output and patch whitespace verbatim.
+docs/audit-2026-09-09/** -whitespace

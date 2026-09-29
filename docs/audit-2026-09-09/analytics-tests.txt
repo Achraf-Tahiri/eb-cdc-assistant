@@ -1,0 +1,4 @@
+PASS M1–M4 : {"nb_documents": 2, "m1_attente_moyenne_jours": 3, "m2_taux_tardif_pct": 33.3, "m3_cycles_par_document": 1, "m4_ratio_cycles_questions": 0.67, "total_questions": 3, "total_cycles": 2}
+PASS M5 : durées exactes, y compris transitions simultanées
+PASS M6 : moyenne des scores 8 et 6 = 7
+PASS export CSV

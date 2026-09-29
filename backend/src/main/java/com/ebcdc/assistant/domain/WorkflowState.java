@@ -1,0 +1,12 @@
+package com.ebcdc.assistant.domain;
+
+public enum WorkflowState {
+    BROUILLON,
+    SOUMIS_PROJET,
+    CORRECTION_METIER,
+    VALIDE_PROJET,
+    TRANSMIS_PRESTATAIRE,
+    CLARIFICATION_DEMANDEE,
+    IMPLEMENTATION_ACCEPTEE,
+    CLOTURE
+}

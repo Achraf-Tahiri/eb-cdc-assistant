@@ -1,0 +1,34 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/ebcdc
+    username: ebcdc
+    password: ebcdc
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  sql:
+    init:
+      mode: always
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+app:
+  jwt:
+    # À remplacer en production — 32 octets minimum
+    secret: "change-me-ebcdc-assistant-secret-key-0123456789"
+    ttl-hours: 12
+  ollama:
+    base-url: "http://localhost:11434"
+    generation-model: "qwen3:4b"
+    embedding-model: "nomic-embed-text"
+  rag:
+    late-clarification-days: 5
+    max-llm-sections: 6
+    # Un extrait moins similaire est ignoré afin d'éviter des conseils hors sujet.
+    min-similarity-score: 0.55

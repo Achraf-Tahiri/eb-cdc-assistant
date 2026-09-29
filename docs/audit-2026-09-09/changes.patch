@@ -1,0 +1,853 @@
+--- before/arreter.sh
++++ after/arreter.sh
+@@ -1,7 +1,6 @@
+ #!/usr/bin/env bash
+-# Arrête proprement le frontend, le backend et la base de données.
++set -eu
+ cd "$(dirname "$0")"
+-fuser -k 3000/tcp >/dev/null 2>&1 && echo "Frontend arrêté (port 3000)"
+-fuser -k 8080/tcp >/dev/null 2>&1 && echo "Backend arrêté (port 8080)"
+-docker compose stop >/dev/null 2>&1 && echo "Base de données arrêtée (les données sont conservées)"
+-echo "Terminé. Pour relancer : ./demarrer.sh"
++bash scripts/stop-app.sh
++docker compose stop
++echo "Arrêt terminé. Les données sont conservées."
+--- before/backend/src/main/java/com/ebcdc/assistant/analytics/AnalyticsService.java
++++ after/backend/src/main/java/com/ebcdc/assistant/analytics/AnalyticsService.java
+@@ -143,8 +143,7 @@
+ 
+     /**
+      * M6 : corrélation score de complétude <-> cycles de clarification, par document.
+-     * Un document bien noté qui génère quand même beaucoup de cycles invalide
+-     * l'argument "le document était ambigu".
++     * Comparaison descriptive : aucune preuve de causalité ni d’absence d’ambiguïté.
+      */
+     public List<Map<String, Object>> completenessCorrelation() {
+         List<Map<String, Object>> rows = new ArrayList<>();
+--- before/backend/src/main/java/com/ebcdc/assistant/config/SecurityConfig.java
++++ after/backend/src/main/java/com/ebcdc/assistant/config/SecurityConfig.java
+@@ -27,7 +27,13 @@
+         http.csrf(csrf -> csrf.disable())
+             .cors(Customizer.withDefaults())
+             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
++            .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, error) -> {
++                response.setStatus(401);
++                response.setContentType("application/json;charset=UTF-8");
++                response.getWriter().write("{\"error\":\"Authentification requise\"}");
++            }))
+             .authorizeHttpRequests(auth -> auth
++                    .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR).permitAll()
+                     .requestMatchers("/api/auth/**").permitAll()
+                     .anyRequest().authenticated())
+             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+--- before/backend/src/main/java/com/ebcdc/assistant/rag/ChunkingService.java
++++ after/backend/src/main/java/com/ebcdc/assistant/rag/ChunkingService.java
+@@ -22,15 +22,14 @@
+     public List<Section> splitSections(String content) {
+         List<Section> sections = new ArrayList<>();
+         String currentTitle = "Document";
++        int currentLevel = 0;
+         StringBuilder currentBody = new StringBuilder();
+         for (String line : content.split("\n", -1)) {
+             if (line.matches("^#{1,6}\\s+.*")) {
+-                if (currentBody.toString().isBlank() && sections.isEmpty()
+-                        && currentTitle.equals("Document")) {
+-                    // pas encore de contenu : on remplace simplement le titre
+-                } else {
++                if (!currentBody.toString().isBlank() || currentLevel > 1) {
+                     sections.add(new Section(currentTitle, currentBody.toString().trim()));
+                 }
++                currentLevel = line.indexOf(' ');
+                 currentTitle = line.replaceFirst("^#{1,6}\\s+", "").trim();
+                 currentBody = new StringBuilder();
+             } else {
+@@ -38,9 +37,7 @@
+             }
+         }
+         sections.add(new Section(currentTitle, currentBody.toString().trim()));
+-        return sections.stream()
+-                .filter(s -> !s.body().isBlank() || sections.size() == 1)
+-                .toList();
++        return sections;
+     }
+ 
+     public List<String> chunk(String text) {
+--- before/backend/src/main/java/com/ebcdc/assistant/rag/CompletenessChecker.java
++++ after/backend/src/main/java/com/ebcdc/assistant/rag/CompletenessChecker.java
+@@ -29,7 +29,8 @@
+ 
+     private static String normalize(String s) {
+         return Normalizer.normalize(s, Normalizer.Form.NFD)
+-                .replaceAll("\\p{M}", "").toLowerCase().trim();
++                .replaceAll("\\p{M}", "").toLowerCase(java.util.Locale.ROOT)
++                .replace("’", "'").trim().replaceFirst("^\\d+[.)]?\\s+", "");
+     }
+ 
+     public Map<String, Object> deterministicReport(String content) {
+@@ -40,7 +41,7 @@
+         List<String> missing = new ArrayList<>();
+         for (String required : REQUIRED_SECTIONS) {
+             String rn = normalize(required);
+-            boolean found = presentNorm.stream().anyMatch(p -> p.contains(rn) || rn.contains(p));
++            boolean found = presentNorm.stream().anyMatch(p -> p.equals(rn) || p.startsWith(rn + " "));
+             if (!found) missing.add(required);
+         }
+         List<String> tooShort = sections.stream()
+--- before/backend/src/main/java/com/ebcdc/assistant/repo/ClarificationRequestRepository.java
++++ after/backend/src/main/java/com/ebcdc/assistant/repo/ClarificationRequestRepository.java
+@@ -6,6 +6,8 @@
+ import java.util.UUID;
+ 
+ public interface ClarificationRequestRepository extends JpaRepository<ClarificationRequest, UUID> {
++    @org.springframework.data.jpa.repository.Query("select c.documentId from ClarificationRequest c where c.id = :id")
++    java.util.Optional<UUID> findDocumentIdById(@org.springframework.data.repository.query.Param("id") UUID id);
+     List<ClarificationRequest> findByDocumentIdOrderByRequestedAtAsc(UUID documentId);
+     long countByDocumentIdAndResolvedAtIsNull(UUID documentId);
+     long countByDocumentId(UUID documentId);
+--- before/backend/src/main/java/com/ebcdc/assistant/web/DocumentController.java
++++ after/backend/src/main/java/com/ebcdc/assistant/web/DocumentController.java
+@@ -5,7 +5,7 @@
+ import com.ebcdc.assistant.repo.*;
+ import com.ebcdc.assistant.workflow.ForbiddenActionException;
+ import com.ebcdc.assistant.workflow.WorkflowService;
+-import org.springframework.http.ResponseEntity;
++import org.springframework.beans.factory.annotation.Value;
+ import org.springframework.security.core.Authentication;
+ import org.springframework.transaction.annotation.Transactional;
+ import org.springframework.web.bind.annotation.*;
+@@ -31,6 +31,9 @@
+     private static final Set<WorkflowState> STATES_EDITABLE_METIER = Set.of(
+             WorkflowState.BROUILLON, WorkflowState.CORRECTION_METIER,
+             WorkflowState.CLARIFICATION_DEMANDEE);
++
++    @Value("${app.rag.late-clarification-days}")
++    private int lateDays;
+ 
+     private final DocumentRepository documents;
+     private final DocumentVersionRepository versions;
+@@ -73,7 +76,8 @@
+     public List<Map<String, Object>> listDocuments(Authentication auth) {
+         AppUser user = me(auth);
+         List<DocumentEntity> docs;
+-        if (user.getRole() == Role.PRESTATAIRE && user.getProvider() != null) {
++        if (user.getRole() == Role.PRESTATAIRE) {
++            if (user.getProvider() == null) return List.of();
+             docs = documents.findByProviderIdOrderByCreatedAtDesc(user.getProvider().getId())
+                     .stream()
+                     .filter(d -> STATES_VISIBLE_PRESTATAIRE.contains(d.getCurrentState()))
+@@ -94,6 +98,7 @@
+         m.put("provider", d.getProvider() != null ? d.getProvider().getName() : "");
+         m.put("createdBy", d.getCreatedBy().getDisplayName());
+         m.put("createdAt", d.getCreatedAt());
++        m.put("lateClarificationDays", lateDays);
+         return m;
+     }
+ 
+@@ -104,6 +109,8 @@
+         if (user.getRole() != Role.METIER) {
+             throw new ForbiddenActionException(user.getRole(), WorkflowAction.CREATE);
+         }
++        requireText(req.title(), "Le titre");
++        requireText(req.docType(), "Le type de document");
+         Provider provider = req.providerId() == null ? null
+                 : providers.findById(req.providerId()).orElseThrow();
+         DocumentEntity doc = new DocumentEntity(req.title(),
+@@ -157,6 +164,7 @@
+             throw new IllegalStateException(
+                     "Le document n'est pas modifiable dans l'état " + doc.getCurrentState());
+         }
++        if (req.content() == null) throw new IllegalArgumentException("Le contenu est obligatoire");
+         int next = versions.findFirstByDocumentIdOrderByVersionNumDesc(id)
+                 .map(v -> v.getVersionNum() + 1).orElse(1);
+         DocumentVersion v = versions.save(new DocumentVersion(doc, next, req.content(), user));
+@@ -205,6 +213,7 @@
+     public Map<String, Object> applyAction(@PathVariable UUID id,
+                                            @RequestBody ActionRequest req,
+                                            Authentication auth) {
++        requireText(req.action(), "L’action");
+         WorkflowState newState = workflowService.applyAction(
+                 id, WorkflowAction.valueOf(req.action()), me(auth), req.comment());
+         return Map.of("state", newState.name());
+@@ -255,6 +264,8 @@
+                     m.put("daysSinceProviderReceived", c.getDaysSinceProviderReceived());
+                     m.put("resolvedAt", c.getResolvedAt());
+                     m.put("resolution", c.getResolution());
++                    m.put("late", c.getDaysSinceProviderReceived() != null
++                            && c.getDaysSinceProviderReceived() > lateDays);
+                     return m;
+                 }).toList();
+     }
+@@ -268,8 +279,13 @@
+         if (user.getRole() != Role.PRESTATAIRE || user.getProvider() == null) {
+             throw new ForbiddenActionException(user.getRole(), WorkflowAction.REQUEST_CLARIFICATION);
+         }
+-        DocumentEntity doc = documents.findById(id).orElseThrow();
++        requireText(req.question(), "La question");
++        DocumentEntity doc = documents.findByIdForUpdate(id).orElseThrow();
+         checkVisibility(doc, user);
++        if (doc.getCurrentState() != WorkflowState.TRANSMIS_PRESTATAIRE
++                && doc.getCurrentState() != WorkflowState.CLARIFICATION_DEMANDEE) {
++            throw new IllegalStateException("Les clarifications sont fermées dans cet état");
++        }
+ 
+         // Jours écoulés depuis la dernière réception par le prestataire :
+         // c'est la donnée clé de la détection des clarifications tardives (M2).
+@@ -304,6 +320,10 @@
+         if (user.getRole() == Role.PRESTATAIRE) {
+             throw new ForbiddenActionException(user.getRole(), WorkflowAction.RESOLVE);
+         }
++        requireText(req.resolution(), "La réponse");
++        UUID documentId = clarifications.findDocumentIdById(cid).orElseThrow();
++        // Toujours verrouiller le document avant de charger/modifier une question.
++        DocumentEntity doc = documents.findByIdForUpdate(documentId).orElseThrow();
+         ClarificationRequest c = clarifications.findById(cid).orElseThrow();
+         if (c.getResolvedAt() != null) {
+             throw new IllegalStateException("Cette clarification est déjà résolue");
+@@ -312,7 +332,6 @@
+         clarifications.save(c);
+ 
+         // Dernière clarification ouverte résolue : le document repart chez le prestataire.
+-        DocumentEntity doc = documents.findById(c.getDocumentId()).orElseThrow();
+         boolean allResolved =
+                 clarifications.countByDocumentIdAndResolvedAtIsNull(c.getDocumentId()) == 0;
+         if (allResolved && doc.getCurrentState() == WorkflowState.CLARIFICATION_DEMANDEE) {
+@@ -322,6 +341,12 @@
+         return Map.of("resolved", true, "documentReturned", allResolved);
+     }
+ 
++    private static void requireText(String value, String label) {
++        if (value == null || value.isBlank()) {
++            throw new IllegalArgumentException(label + " est obligatoire");
++        }
++    }
++
+     private static String abbreviate(String s) {
+         if (s == null) return "";
+         return s.length() <= 120 ? s : s.substring(0, 117) + "...";
+--- before/backend/src/main/java/com/ebcdc/assistant/web/RagController.java
++++ after/backend/src/main/java/com/ebcdc/assistant/web/RagController.java
+@@ -33,6 +33,7 @@
+     public record SearchRequest(String query) {}
+     public record IngestTextRequest(String label, String content) {}
+ 
++    private final com.ebcdc.assistant.repo.DocumentRepository documents;
+     private final RagJobRepository jobs;
+     private final IngestionService ingestionService;
+     private final OllamaClient ollamaClient;
+@@ -40,7 +41,9 @@
+     private final ObjectMapper mapper = new ObjectMapper();
+ 
+     public RagController(RagJobRepository jobs, IngestionService ingestionService,
+-                         OllamaClient ollamaClient, RagVectorStore vectorStore) {
++                         OllamaClient ollamaClient, RagVectorStore vectorStore,
++                         com.ebcdc.assistant.repo.DocumentRepository documents) {
++        this.documents = documents;
+         this.jobs = jobs;
+         this.ingestionService = ingestionService;
+         this.ollamaClient = ollamaClient;
+@@ -58,6 +61,12 @@
+     public Map<String, Object> createJob(@RequestBody CreateJobRequest req,
+                                          Authentication auth) throws Exception {
+         internalOnly(auth);
++        if (req.documentId() == null || req.jobType() == null) {
++            throw new IllegalArgumentException("Document et type de job obligatoires");
++        }
++        if (!documents.existsById(req.documentId())) {
++            throw new java.util.NoSuchElementException("Document introuvable");
++        }
+         JobType type = JobType.valueOf(req.jobType());
+         String inputRef = null;
+         if (type == JobType.SUGGESTION) {
+--- before/backend/src/main/java/com/ebcdc/assistant/workflow/WorkflowService.java
++++ after/backend/src/main/java/com/ebcdc/assistant/workflow/WorkflowService.java
+@@ -2,6 +2,7 @@
+ 
+ import com.ebcdc.assistant.domain.*;
+ import com.ebcdc.assistant.repo.DocumentRepository;
++import com.ebcdc.assistant.repo.ClarificationRequestRepository;
+ import com.ebcdc.assistant.repo.WorkflowTransitionRepository;
+ import org.springframework.stereotype.Service;
+ import org.springframework.transaction.annotation.Transactional;
+@@ -49,11 +50,14 @@
+                   new TransitionRule(CLOTURE, Set.of(PROJET)))
+     );
+ 
++    private final ClarificationRequestRepository clarifications;
+     private final DocumentRepository documentRepository;
+     private final WorkflowTransitionRepository transitionRepository;
+ 
+     public WorkflowService(DocumentRepository documentRepository,
+-                           WorkflowTransitionRepository transitionRepository) {
++                           WorkflowTransitionRepository transitionRepository,
++                           ClarificationRequestRepository clarifications) {
++        this.clarifications = clarifications;
+         this.documentRepository = documentRepository;
+         this.transitionRepository = transitionRepository;
+     }
+@@ -86,6 +90,18 @@
+             }
+         }
+ 
++        if (action == SEND && doc.getProvider() == null) {
++            throw new IllegalStateException("Choisissez un prestataire avant la transmission");
++        }
++        if ((action == RESOLVE || action == ACCEPT)
++                && clarifications.countByDocumentIdAndResolvedAtIsNull(documentId) > 0) {
++            throw new IllegalStateException("Répondez à toutes les clarifications avant de continuer");
++        }
++        if (action == REQUEST_CLARIFICATION
++                && clarifications.countByDocumentIdAndResolvedAtIsNull(documentId) == 0) {
++            throw new IllegalArgumentException("Une question est obligatoire pour demander une clarification");
++        }
++
+         transitionRepository.save(new WorkflowTransition(
+                 documentId, doc.getCurrentState(), rule.target(), action, actor, comment));
+         doc.setCurrentState(rule.target());
+--- before/backend/src/test/java/com/ebcdc/assistant/rag/CompletenessCheckerTest.java
++++ after/backend/src/test/java/com/ebcdc/assistant/rag/CompletenessCheckerTest.java
+@@ -0,0 +1,35 @@
++package com.ebcdc.assistant.rag;
++import org.junit.jupiter.api.Test;
++import java.util.List;
++import static org.assertj.core.api.Assertions.*;
++
++class CompletenessCheckerTest {
++    final ChunkingService chunker = new ChunkingService();
++    final CompletenessChecker checker = new CompletenessChecker(chunker);
++    @Test void emptyTemplateHasPresentButShortSections() {
++        var report=checker.deterministicReport("# Exemple\n\n## Contexte\n\n## Périmètre\n\n## Besoins fonctionnels\n\n## Contraintes\n\n## Critères d'acceptation\n\n## Délais\n");
++        assertThat((List<?>) report.get("sections_obligatoires_manquantes")).isEmpty();
++        assertThat((List<?>) report.get("sections_trop_courtes")).hasSize(6);
++    }
++    @Test void partialHeadingDoesNotSatisfyRequiredSection() {
++        var report=checker.deterministicReport("## C\nTexte");
++        assertThat((List<?>)report.get("sections_obligatoires_manquantes")).hasSize(6);
++    }
++    @Test void accentsCaseAndNumberingAreTolerated() {
++        var report=checker.deterministicReport("## 1. PERIMETRE\n"+"a".repeat(200));
++        assertThat((List<String>)report.get("sections_obligatoires_manquantes")).doesNotContain("Périmètre");
++        assertThat((List<?>)report.get("sections_trop_courtes")).isEmpty();
++    }
++    @Test void chunksPreserveContentAndOverlap() {
++        var input="0123456789".repeat(350);
++        var chunks=chunker.chunk(input);
++        assertThat(chunks).hasSize(4).allMatch(c -> c.length() <= 1200);
++        String reconstructed=chunks.getFirst();
++        for(int i=1;i<chunks.size();i++) {
++            assertThat(chunks.get(i).substring(0,200)).isEqualTo(chunks.get(i-1).substring(chunks.get(i-1).length()-200));
++            reconstructed+=chunks.get(i).substring(200);
++        }
++        assertThat(reconstructed).isEqualTo(input);
++        assertThat(chunker.chunk("  ")).isEmpty();
++    }
++}
+--- before/backend/src/test/java/com/ebcdc/assistant/rag/RagJobWorkerTest.java
++++ after/backend/src/test/java/com/ebcdc/assistant/rag/RagJobWorkerTest.java
+@@ -0,0 +1,25 @@
++package com.ebcdc.assistant.rag;
++import com.ebcdc.assistant.domain.*;
++import com.ebcdc.assistant.repo.*;
++import org.junit.jupiter.api.Test;
++import java.util.*;
++import static org.assertj.core.api.Assertions.*;
++import static org.mockito.Mockito.*;
++class RagJobWorkerTest {
++    @Test void failedModelCallBecomesFailedJobAndWorkerCanContinue() {
++        var jobs=mock(RagJobRepository.class);
++        var versions=mock(DocumentVersionRepository.class);
++        var ollama=mock(OllamaClient.class);
++        var chunks=new ChunkingService();
++        var worker=new RagJobWorker(jobs,versions,ollama,chunks,new CompletenessChecker(chunks),mock(RagVectorStore.class),6);
++        var failed=new RagJob(UUID.randomUUID(),JobType.SUGGESTION,"{\"sectionTitle\":\"Contexte\",\"draft\":\"Texte\"}");
++        when(jobs.findFirstByStatusOrderByCreatedAtAsc(JobStatus.PENDING)).thenReturn(Optional.of(failed),Optional.empty());
++        when(ollama.embedOne(anyString())).thenThrow(new IllegalStateException("Ollama indisponible"));
++        worker.poll();
++        assertThat(failed.getStatus()).isEqualTo(JobStatus.FAILED);
++        assertThat(failed.getError()).contains("Ollama indisponible");
++        assertThat(failed.getFinishedAt()).isNotNull();
++        assertThatCode(worker::poll).doesNotThrowAnyException();
++        verify(jobs,times(2)).save(failed);
++    }
++}
+--- before/backend/src/test/java/com/ebcdc/assistant/web/DocumentControllerAccessTest.java
++++ after/backend/src/test/java/com/ebcdc/assistant/web/DocumentControllerAccessTest.java
+@@ -0,0 +1,21 @@
++package com.ebcdc.assistant.web;
++import com.ebcdc.assistant.domain.*;
++import com.ebcdc.assistant.repo.*;
++import com.ebcdc.assistant.rag.RagVectorStore;
++import com.ebcdc.assistant.workflow.WorkflowService;
++import org.junit.jupiter.api.Test;
++import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
++import static org.assertj.core.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class DocumentControllerAccessTest {
++    @Test void providerWithoutContractSeesNoDocuments() {
++        var documents=mock(DocumentRepository.class);
++        var controller=new DocumentController(documents,mock(DocumentVersionRepository.class),mock(ProviderRepository.class),
++            mock(WorkflowTransitionRepository.class),mock(ClarificationRequestRepository.class),mock(RagJobRepository.class),
++            mock(RagVectorStore.class),mock(WorkflowService.class));
++        var user=new AppUser("orphan@test.fr","Orphan",Role.PRESTATAIRE,"unused",null);
++        assertThat(controller.listDocuments(new UsernamePasswordAuthenticationToken(user,null))).isEmpty();
++        verifyNoInteractions(documents);
++    }
++}
+--- before/backend/src/test/java/com/ebcdc/assistant/workflow/WorkflowServiceTest.java
++++ after/backend/src/test/java/com/ebcdc/assistant/workflow/WorkflowServiceTest.java
+@@ -0,0 +1,91 @@
++package com.ebcdc.assistant.workflow;
++
++import com.ebcdc.assistant.domain.*;
++import com.ebcdc.assistant.repo.*;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.MethodSource;
++import java.util.*;
++import java.util.stream.Stream;
++import static org.assertj.core.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class WorkflowServiceTest {
++    private final DocumentRepository documents = mock(DocumentRepository.class);
++    private final WorkflowTransitionRepository audit = mock(WorkflowTransitionRepository.class);
++    private final ClarificationRequestRepository questions = mock(ClarificationRequestRepository.class);
++    private final WorkflowService service = new WorkflowService(documents, audit, questions);
++    private final Provider alpha = new Provider("Alpha", "A", 5);
++    private final AppUser metier = user(Role.METIER, null);
++    private AppUser user(Role role, Provider provider) {
++        return new AppUser(role+"@test.fr", "Test", role, "unused", provider);
++    }
++    private DocumentEntity document(WorkflowState state, Provider provider) {
++        var d = new DocumentEntity("Test", DocType.EB, "TEST", provider, metier);
++        d.setCurrentState(state);
++        when(documents.findByIdForUpdate(d.getId())).thenReturn(Optional.of(d));
++        return d;
++    }
++    static Stream<Object[]> combinations() {
++        return Arrays.stream(WorkflowState.values()).flatMap(s -> Arrays.stream(WorkflowAction.values())
++            .flatMap(a -> Arrays.stream(Role.values()).map(r -> new Object[]{s,a,r})));
++    }
++    // Expected business rules, independent of the implementation's transition table.
++    private WorkflowState expected(WorkflowState s, WorkflowAction a, Role r) {
++        return switch (a) {
++            case SUBMIT -> r == Role.METIER && (s == WorkflowState.BROUILLON || s == WorkflowState.CORRECTION_METIER) ? WorkflowState.SOUMIS_PROJET : null;
++            case VALIDATE -> r == Role.PROJET && s == WorkflowState.SOUMIS_PROJET ? WorkflowState.VALIDE_PROJET : null;
++            case REQUEST_CORRECTION -> r == Role.PROJET && s == WorkflowState.SOUMIS_PROJET ? WorkflowState.CORRECTION_METIER : null;
++            case SEND -> r == Role.PROJET && s == WorkflowState.VALIDE_PROJET ? WorkflowState.TRANSMIS_PRESTATAIRE : null;
++            case REQUEST_CLARIFICATION -> r == Role.PRESTATAIRE && s == WorkflowState.TRANSMIS_PRESTATAIRE ? WorkflowState.CLARIFICATION_DEMANDEE : null;
++            case RESOLVE -> r != Role.PRESTATAIRE && s == WorkflowState.CLARIFICATION_DEMANDEE ? WorkflowState.TRANSMIS_PRESTATAIRE : null;
++            case ACCEPT -> r == Role.PRESTATAIRE && s == WorkflowState.TRANSMIS_PRESTATAIRE ? WorkflowState.IMPLEMENTATION_ACCEPTEE : null;
++            case CLOSE -> r == Role.PROJET && s == WorkflowState.IMPLEMENTATION_ACCEPTEE ? WorkflowState.CLOTURE : null;
++            default -> null;
++        };
++    }
++    @ParameterizedTest(name="{0} / {1} / {2}") @MethodSource("combinations")
++    void enforcesEveryStateActionRoleCombination(WorkflowState state, WorkflowAction action, Role role) {
++        var d = document(state, alpha);
++        var actor = user(role, role == Role.PRESTATAIRE ? alpha : null);
++        when(questions.countByDocumentIdAndResolvedAtIsNull(d.getId()))
++            .thenReturn(action == WorkflowAction.REQUEST_CLARIFICATION ? 1L : 0L);
++        var target = expected(state, action, role);
++        if (target == null) {
++            assertThatThrownBy(() -> service.applyAction(d.getId(), action, actor, "test"))
++                .isInstanceOfAny(InvalidTransitionException.class, ForbiddenActionException.class);
++            assertThat(d.getCurrentState()).isEqualTo(state);
++            verifyNoInteractions(audit);
++            assertThat(service.availableActions(state, role)).doesNotContain(action);
++        } else {
++            assertThat(service.applyAction(d.getId(), action, actor, "test")).isEqualTo(target);
++            assertThat(d.getCurrentState()).isEqualTo(target);
++            verify(audit).save(argThat(t -> t.getFromState() == state && t.getToState() == target && t.getAction() == action));
++            assertThat(service.availableActions(state, role)).contains(action);
++        }
++    }
++    @Test void rejectsOtherProviderAndUnassignedProvider() {
++        var d = document(WorkflowState.TRANSMIS_PRESTATAIRE, alpha);
++        for (Provider p : Arrays.asList(new Provider("Beta", "B", 5), null)) {
++            assertThatThrownBy(() -> service.applyAction(d.getId(), WorkflowAction.ACCEPT, user(Role.PRESTATAIRE,p),null))
++                .isInstanceOf(ForbiddenActionException.class);
++        }
++        verifyNoInteractions(audit);
++    }
++    @Test void rejectsSendWithoutProvider() {
++        var d=document(WorkflowState.VALIDE_PROJET,null);
++        assertThatThrownBy(() -> service.applyAction(d.getId(),WorkflowAction.SEND,user(Role.PROJET,null),null))
++            .isInstanceOf(IllegalStateException.class);
++        verifyNoInteractions(audit);
++    }
++    @Test void rejectsUnansweredQuestionsAndEmptyCycles() {
++        var d=document(WorkflowState.CLARIFICATION_DEMANDEE,alpha);
++        when(questions.countByDocumentIdAndResolvedAtIsNull(d.getId())).thenReturn(1L);
++        assertThatThrownBy(() -> service.applyAction(d.getId(),WorkflowAction.RESOLVE,metier,null)).isInstanceOf(IllegalStateException.class);
++        d.setCurrentState(WorkflowState.TRANSMIS_PRESTATAIRE);
++        assertThatThrownBy(() -> service.applyAction(d.getId(),WorkflowAction.ACCEPT,user(Role.PRESTATAIRE,alpha),null)).isInstanceOf(IllegalStateException.class);
++        when(questions.countByDocumentIdAndResolvedAtIsNull(d.getId())).thenReturn(0L);
++        assertThatThrownBy(() -> service.applyAction(d.getId(),WorkflowAction.REQUEST_CLARIFICATION,user(Role.PRESTATAIRE,alpha),null)).isInstanceOf(IllegalArgumentException.class);
++        verifyNoInteractions(audit);
++    }
++}
+--- before/demarrer.sh
++++ after/demarrer.sh
+@@ -1,132 +1,66 @@
+ #!/usr/bin/env bash
+-# =====================================================================
+-# Assistant EB/CDC — démarrage automatique avec vérifications
+-# Usage : ./demarrer.sh   (depuis le dossier du projet)
+-# Arrêt : Ctrl+C dans ce terminal, ou ./arreter.sh depuis un autre.
+-# En cas d'échec, le script indique quel fichier de log m'envoyer.
+-# =====================================================================
+-set -u
++# Lance uniquement les processus de ce projet. Données conservées.
++set -eu
+ cd "$(dirname "$0")"
+-
+-ROUGE='\033[0;31m'; VERT='\033[0;32m'; JAUNE='\033[1;33m'; NC='\033[0m'
+-ok()   { echo -e "${VERT}  OK  $1${NC}"; }
+-warn() { echo -e "${JAUNE}  !!  $1${NC}"; }
+-ko()   { echo -e "${ROUGE}  XX  $1${NC}"; }
+-
+-echo "=== Assistant EB/CDC — démarrage ==="
+-
+-# --- 0. Outils requis -------------------------------------------------
+-for c in docker java mvn node npm curl ss; do
+-  command -v "$c" >/dev/null 2>&1 || { ko "'$c' introuvable — installe-le puis relance."; exit 1; }
++mkdir -p .run
++for tool in docker java mvn node npm curl ss setsid flock; do
++  command -v "$tool" >/dev/null || { echo "Outil absent : $tool"; exit 1; }
+ done
+-ok "Outils présents (docker, java, mvn, node, npm)"
+-
+-# --- 1. Libération des ports 3000 et 8080 ----------------------------
+-if ss -tln | grep -q ':3000 '; then
+-  warn "Port 3000 occupé — arrêt d'open-webui s'il tourne"
+-  docker stop open-webui >/dev/null 2>&1
+-  docker update --restart=no open-webui >/dev/null 2>&1  # ne reviendra plus au boot
+-  fuser -k 3000/tcp >/dev/null 2>&1
+-  sleep 2
+-  if ss -tln | grep -q ':3000 '; then
+-    ko "Port 3000 toujours occupé. Envoie-moi la sortie de : ss -tlnp | grep 3000"
++exec 9>.run/launcher.lock
++flock -n 9 || { echo "Ce projet est déjà lancé par demarrer.sh."; exit 1; }
++for port in 3000 8080; do
++  if ss -H -ltn "sport = :$port" | grep -q .; then
++    echo "Port $port occupé. Arrêtez son application ou l'instance précédente avant de relancer."
+     exit 1
+   fi
+-fi
+-if ss -tln | grep -q ':8080 '; then
+-  warn "Un ancien backend occupe le port 8080 — arrêt"
+-  fuser -k 8080/tcp >/dev/null 2>&1
+-  sleep 2
+-fi
+-ok "Ports 3000 et 8080 libres"
++done
++cleanup() { bash scripts/stop-app.sh; }
++trap cleanup EXIT
++trap 'exit 0' INT TERM
+ 
+-# --- 2. Base de données ----------------------------------------------
+-if ! docker compose up -d > docker.log 2>&1; then
+-  ko "docker compose a échoué — voici l'erreur exacte :"
+-  tail -15 docker.log
+-  echo
+-  echo "  Si l'erreur parle du démon Docker : sudo systemctl start docker"
+-  echo "  Sinon, envoie-moi ces lignes."
+-  exit 1
+-fi
+-DB_PRETE=0
+-for i in $(seq 1 30); do
+-  if docker exec ebcdc-db pg_isready -U ebcdc >/dev/null 2>&1; then DB_PRETE=1; break; fi
++docker compose up -d > docker.log 2>&1 || { cat docker.log; exit 1; }
++ready=0
++for ((i=0;i<30;i++)); do
++  if docker exec ebcdc-db pg_isready -U ebcdc >/dev/null 2>&1; then ready=1; break; fi
+   sleep 1
+ done
+-if [ "$DB_PRETE" = 1 ]; then
+-  ok "PostgreSQL prêt (port 5433, volume conservé)"
+-else
+-  ko "PostgreSQL ne répond pas. Envoie-moi la sortie de : docker logs ebcdc-db"
+-  exit 1
++[ "$ready" = 1 ] || { echo "Base indisponible : docker logs ebcdc-db"; exit 1; }
++if ! curl --max-time 5 -fsS http://localhost:11434/api/tags >/dev/null; then
++  echo "Ollama indisponible : le workflow fonctionne, mais les analyses IA échoueront."
+ fi
+ 
+-# --- 3. Ollama --------------------------------------------------------
+-if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+-  ok "Ollama répond (port 11434)"
+-else
+-  warn "Ollama ne répond pas — le RAG échouera. Dans un autre terminal : sudo systemctl start ollama"
+-fi
+-
+-# --- 4. Backend (arrière-plan, logs dans backend.log) ----------------
+-echo "  ->  Démarrage du backend Java... (1 à 2 min, patience)"
+-( cd backend && mvn spring-boot:run > ../backend.log 2>&1 ) &
+-BACK_PID=$!
+-trap 'echo; echo "Arrêt en cours..."; fuser -k 3000/tcp 8080/tcp >/dev/null 2>&1; exit 0' INT TERM
+-
+-BACK_OK=0
+-for i in $(seq 1 90); do
+-  if curl -s -o /dev/null http://localhost:8080/api/providers; then BACK_OK=1; break; fi
+-  kill -0 "$BACK_PID" 2>/dev/null || break   # mvn s'est arrêté tout seul = échec
++start_process() {
++  local name="$1" folder="$2"; shift 2
++  (cd "$folder"; exec setsid "$@") 9>&- > "$name.log" 2>&1 &
++  local pid=$!
++  # Le PID et son instant de création permettent d'éviter d'arrêter un PID réutilisé.
++  local started
++  started=$(sed 's/^.*) //' "/proc/$pid/stat" | awk '{print $20}')
++  echo "$pid $started" > ".run/$name.pid"
++}
++start_process backend backend mvn -B spring-boot:run
++ready=0
++for ((i=0;i<90;i++)); do
++  code=$(curl --max-time 2 -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/providers || true)
++  if [ "$code" = 401 ]; then ready=1; break; fi
+   sleep 2
+ done
+-if [ "$BACK_OK" = 1 ]; then
+-  ok "Backend démarré (port 8080)"
+-else
+-  ko "Le backend n'a pas démarré. Envoie-moi la sortie de : tail -60 backend.log"
+-  exit 1
++[ "$ready" = 1 ] || { tail -40 backend.log; exit 1; }
++# Les données de démonstration sont un choix explicite, indépendant du démarrage.
++if [ "${EBCDC_SEED_DEMO:-0}" = 1 ]; then
++  docker exec -i ebcdc-db psql -v ON_ERROR_STOP=1 -U ebcdc -d ebcdc < scripts/seed-demo.sql
+ fi
+-
+-# --- 5. Jeu de données de démo (idempotent, sans risque) -------------
+-if [ -f scripts/seed-demo.sql ]; then
+-  docker exec -i ebcdc-db psql -U ebcdc -d ebcdc < scripts/seed-demo.sql >/dev/null 2>&1 \
+-    && ok "Jeu de démo vérifié (déjà présent = rien à faire)" \
+-    || warn "Seed de démo non appliqué (non bloquant)"
++if [ ! -d frontend/node_modules ]; then
++  (cd frontend; npm ci) > frontend-install.log 2>&1 || { tail -30 frontend-install.log; exit 1; }
+ fi
+-
+-# --- 6. Frontend ------------------------------------------------------
+-cd frontend
+-if [ ! -d node_modules ]; then
+-  echo "  ->  npm install (première fois dans ce dossier, 1 à 3 min)..."
+-  npm install > ../frontend-install.log 2>&1 || {
+-    ko "npm install a échoué. Envoie-moi la sortie de : tail -40 frontend-install.log"
+-    exit 1
+-  }
+-fi
+-echo "  ->  Démarrage du frontend Next.js..."
+-npm run dev > ../frontend.log 2>&1 &
+-cd ..
+-
+-FRONT_OK=0
+-for i in $(seq 1 45); do
+-  if curl -s -o /dev/null http://localhost:3000; then FRONT_OK=1; break; fi
++start_process frontend frontend npm run dev
++ready=0
++for ((i=0;i<45;i++)); do
++  if curl --max-time 3 -fsS http://localhost:3000 >/dev/null 2>&1; then ready=1; break; fi
+   sleep 1
+ done
+-if [ "$FRONT_OK" = 1 ]; then
+-  ok "Frontend démarré (port 3000)"
+-else
+-  ko "Le frontend n'a pas démarré. Envoie-moi la sortie de : tail -40 frontend.log"
+-  exit 1
+-fi
+-
+-echo
+-echo "======================================================================"
+-echo "  Tout est prêt !  Ouvre en NAVIGATION PRIVEE (Ctrl+Maj+P) :"
+-echo "      http://localhost:3000"
+-echo "  Comptes : metier@demo.fr | projet@demo.fr | prestataire@demo.fr"
+-echo "  Mot de passe : demo1234"
+-echo "----------------------------------------------------------------------"
+-echo "  Logs : backend.log et frontend.log dans ce dossier"
+-echo "  Arrêt : Ctrl+C ici, ou ./arreter.sh depuis un autre terminal"
+-echo "======================================================================"
++[ "$ready" = 1 ] || { tail -40 frontend.log; exit 1; }
++echo "Application prête : http://localhost:3000"
++echo "Comptes : metier@demo.fr / projet@demo.fr / prestataire@demo.fr ; mot de passe : demo1234"
++echo "Logs : backend.log, frontend.log. Arrêt : Ctrl+C ou ./arreter.sh"
+ wait
+--- before/frontend/app/analytics/page.js
++++ after/frontend/app/analytics/page.js
+@@ -110,7 +110,7 @@
+       <div className="panel">
+         <h2>Par prestataire</h2>
+         <p className="panel-sub">
+-          M1 : attente moyenne · M2 : % de clarifications tardives (&gt; 5 j) ·
++          M1 : attente moyenne · M2 : % de clarifications tardives (seuil configuré) ·
+           M3 : cycles par document · M4 : cycles / questions (1,00 = questions au
+           compte-gouttes, une par cycle).
+         </p>
+@@ -206,8 +206,8 @@
+       <div className="panel">
+         <h2>Complétude vs clarifications (M6)</h2>
+         <p className="panel-sub">
+-          Un document bien noté qui génère quand même des cycles de clarification
+-          invalide l'argument « le document était ambigu ».
++          Comparaison descriptive du score IA et des clarifications. Une note élevée
++          ne prouve pas l’absence d’ambiguïté ni la responsabilité du prestataire.
+         </p>
+         <table>
+           <thead>
+--- before/frontend/app/documents/[id]/page.js
++++ after/frontend/app/documents/[id]/page.js
+@@ -55,8 +55,10 @@
+       setActions(await api(`/api/documents/${id}/available-actions`));
+       setTimeline(await api(`/api/documents/${id}/timeline`));
+       setClarifs(await api(`/api/documents/${id}/clarifications`));
+-      const jobs = await api(`/api/rag/jobs?documentId=${id}`);
+-      if (jobs.length > 0) setActiveJob(jobs[0]);
++      if (getSession()?.user?.role !== "PRESTATAIRE") {
++        const jobs = await api(`/api/rag/jobs?documentId=${id}`);
++        setActiveJob(jobs[0] || null);
++      }
+     } catch (e) {
+       setError(e.message);
+     }
+@@ -94,6 +96,7 @@
+   }
+ 
+   const role = session?.user?.role;
++  const workflowButtons = actions.filter((a) => !["REQUEST_CLARIFICATION", "RESOLVE"].includes(a));
+   const canEdit =
+     role !== "PRESTATAIRE" &&
+     (role === "PROJET" ||
+@@ -140,6 +143,10 @@
+ 
+   async function doAction(action) {
+     setError(""); setNotice("");
++    if (canEdit && content !== doc.content) {
++      setError("Enregistrez vos modifications avant de changer l’état du document.");
++      return;
++    }
+     try {
+       await api(`/api/documents/${id}/actions`, {
+         method: "POST",
+@@ -244,7 +251,7 @@
+         </div>
+       )}
+ 
+-      {actions.length > 0 && (
++      {workflowButtons.length > 0 && (
+         <div className="panel">
+           <h2>Actions de workflow</h2>
+           <p className="panel-sub">
+@@ -259,9 +266,7 @@
+             />
+           </div>
+           <div className="btn-row">
+-            {actions
+-              .filter((a) => a !== "REQUEST_CLARIFICATION")
+-              .map((a) => (
++            {workflowButtons.map((a) => (
+                 <button key={a} className="btn" onClick={() => doAction(a)}>
+                   {ACTION_LABELS[a] || a}
+                 </button>
+@@ -310,7 +315,7 @@
+                   {c.daysSinceProviderReceived != null && (
+                     <>
+                       {" · "}
+-                      <span className={c.daysSinceProviderReceived > 5 ? "late" : ""}>
++                      <span className={c.late ? "late" : ""}>
+                         posée {c.daysSinceProviderReceived} j après réception
+                       </span>
+                     </>
+@@ -339,7 +344,7 @@
+                         onClick={() => resolveClarification(c.id)}
+                         disabled={!(answers[c.id] || "").trim()}
+                       >
+-                        Répondre et renvoyer
++                        Enregistrer la réponse
+                       </button>
+                     </div>
+                   )
+--- before/frontend/lib/api.js
++++ after/frontend/lib/api.js
+@@ -23,11 +23,11 @@
+   if (!(options.body instanceof FormData)) {
+     headers["Content-Type"] = "application/json";
+   }
+-  if (session?.token) {
++  if (session?.token && path !== "/api/auth/login") {
+     headers["Authorization"] = `Bearer ${session.token}`;
+   }
+   const res = await fetch(`${API}${path}`, { ...options, headers });
+-  if (res.status === 401) {
++  if (res.status === 401 && path !== "/api/auth/login") {
+     clearSession();
+     if (typeof window !== "undefined") window.location.href = "/";
+     throw new Error("Session expirée, reconnectez-vous");
+--- before/frontend/package.json
++++ after/frontend/package.json
+@@ -8,8 +8,11 @@
+     "start": "next start"
+   },
+   "dependencies": {
+-    "next": "^14.2.15",
+-    "react": "^18.3.1",
+-    "react-dom": "^18.3.1"
++    "next": "15.5.25",
++    "react": "19.2.8",
++    "react-dom": "19.2.8"
++  },
++  "overrides": {
++    "postcss": "8.5.28"
+   }
+ }
+--- before/scripts/seed-demo.sql
++++ after/scripts/seed-demo.sql
+@@ -19,6 +19,7 @@
+     v_metier  uuid;
+     v_projet  uuid;
+     v_prest   uuid;
++    v_prest_beta uuid;
+     v_alpha   uuid;
+     v_beta    uuid;
+     v_doc1    uuid := gen_random_uuid();
+@@ -41,6 +42,13 @@
+         RAISE NOTICE 'Jeu de démonstration déjà présent, rien à faire.';
+         RETURN;
+     END IF;
++
++    -- L'acteur Beta doit appartenir au contrat Beta, comme l'exige l'API.
++    INSERT INTO users (id, email, display_name, role, password_hash, provider_id)
++    SELECT gen_random_uuid(), 'prestataire.beta@demo.fr', 'Béa Prestataire',
++           'PRESTATAIRE', password_hash, v_beta FROM users WHERE id = v_prest
++    ON CONFLICT (email) DO NOTHING;
++    SELECT id INTO v_prest_beta FROM users WHERE email = 'prestataire.beta@demo.fr';
+ 
+     -- ------------------------------------------------------------------
+     -- Document 1 : cycle complet avec clarification tardive (TMA Alpha)
+@@ -121,7 +129,7 @@
+      NULL, now() - interval '8.5 days'),
+     (v_doc2, 'VALIDE_PROJET', 'TRANSMIS_PRESTATAIRE', 'SEND', v_projet, 'PROJET',
+      'Envoi TMA Beta', now() - interval '8 days'),
+-    (v_doc2, 'TRANSMIS_PRESTATAIRE', 'IMPLEMENTATION_ACCEPTEE', 'ACCEPT', v_prest, 'PRESTATAIRE',
++    (v_doc2, 'TRANSMIS_PRESTATAIRE', 'IMPLEMENTATION_ACCEPTEE', 'ACCEPT', v_prest_beta, 'PRESTATAIRE',
+      'Accepté sans question', now() - interval '1 day');
+ 
+     -- ------------------------------------------------------------------
+--- before/scripts/stop-app.sh
++++ after/scripts/stop-app.sh
+@@ -0,0 +1,17 @@
++#!/usr/bin/env bash
++# Arrête seulement les groupes de processus enregistrés par demarrer.sh.
++set -u
++cd "$(dirname "$0")/.."
++for name in frontend backend; do
++  file=".run/$name.pid"
++  [ -f "$file" ] || continue
++  read -r pid started < "$file"
++  if [[ "$pid" =~ ^[0-9]+$ ]] && [ -r "/proc/$pid/stat" ]; then
++    actual=$(sed 's/^.*) //' "/proc/$pid/stat" | awk '{print $20}')
++    if [ "$actual" = "$started" ]; then
++      kill -TERM -- "-$pid" 2>/dev/null || true
++      echo "$name : arrêt demandé."
++    fi
++  fi
++  rm -f "$file"
++done

@@ -1,0 +1,103 @@
+{
+  "COMPLETENESS_CHECK": {
+    "id": "ef82fd57-8d7b-43a1-af29-642557708042",
+    "documentId": "7907c560-8491-41ef-88bb-f6f06edee4bc",
+    "jobType": "COMPLETENESS_CHECK",
+    "status": "DONE",
+    "createdAt": "2026-09-09T10:22:54.202741Z",
+    "finishedAt": "2026-09-09T10:23:53.949144Z",
+    "error": null,
+    "result": {
+      "version_analysee": 2,
+      "checklist": {
+        "sections_presentes": [
+          "Contraintes"
+        ],
+        "sections_obligatoires_manquantes": [
+          "Contexte",
+          "Périmètre",
+          "Besoins fonctionnels",
+          "Critères d'acceptation",
+          "Délais"
+        ],
+        "sections_trop_courtes": [],
+        "longueur_totale": 252
+      },
+      "sections": [
+        {
+          "titre": "Contraintes",
+          "analyse": {
+            "ambiguites": [
+              "Le terme 'comptables autorisés' n'est pas défini : il est ambigu de savoir comment les comptables autorisés sont identifiés (ex : liste de personnes, groupe d'utilisateurs, autorisation via un système d'identité) et qui a le pouvoir de les autoriser (ex : administrateur, système interne)"
+            ],
+            "informations_manquantes": [
+              "La méthode d'authentification pour les comptables autorisés (ex : authentification par mot de passe, OAuth, intégration avec un système de gestion des utilisateurs)",
+              "Les critères de sécurité pour les exports CSV (ex : chiffrement des données, validation des données avant exportation, limites de taille des fichiers)",
+              "La définition précise du format CSV (ex : présence d'en-têtes, format des champs, gestion des caractères spéciaux)"
+            ],
+            "questions_previsibles_prestataire": [
+              "Comment les comptables autor: autorisés sont identifiés et comment sont-ils autorisés ?",
+              "Quelles sont les mesures de sécurité pour les exports CSV ?",
+              "Quel est le format exact du CSV (ex : en-têtes, séparation des champs, encodage des caractères spéciaux) ?"
+            ],
+            "score_completude": 3
+          }
+        }
+      ],
+      "sections_analysees": 1,
+      "sections_totales": 1
+    }
+  },
+  "SUGGESTION": {
+    "id": "a047f906-8921-46ff-9de3-e45ca4af9c2f",
+    "documentId": "7907c560-8491-41ef-88bb-f6f06edee4bc",
+    "jobType": "SUGGESTION",
+    "status": "DONE",
+    "createdAt": "2026-09-09T10:22:54.212071Z",
+    "finishedAt": "2026-09-09T10:24:41.848054Z",
+    "error": null,
+    "sectionTitle": "Contraintes",
+    "result": {
+      "section": "Contraintes",
+      "extraits_utilises": [
+        {
+          "chunk_text": "Le portail Orion doit exporter les factures au format CSV UTF-8 avec séparateur point-virgule. Chaque facture comporte un identifiant unique, une date et un montant en dirhams. Seuls les comptables autorisés peuvent exporter les données.",
+          "source_label": "audit.md",
+          "section_title": "Contraintes",
+          "score": 0.7508
+        },
+        {
+          "chunk_text": "Le portail Orion doit exporter les factures au format CSV UTF-8 avec séparateur point-virgule. Chaque facture comporte un identifiant unique, une date et un montant en dirhams. Seuls les comptables autorisés peuvent exporter les données.",
+          "source_label": "audit.txt",
+          "section_title": "Contraintes",
+          "score": 0.7508
+        },
+        {
+          "chunk_text": "Le portail Orion doit exporter les factures au format CSV UTF-8 avec séparateur point-virgule. Chaque facture comporte un identifiant unique, une date et un montant en dirhams. Seuls les comptables autorisés peuvent exporter les données.",
+          "source_label": "AUDIT-Orion",
+          "section_title": "Contraintes",
+          "score": 0.7508
+        }
+      ],
+      "resultat": {
+        "suggestions": [
+          {
+            "titre": "Format de fichier CSV",
+            "texte": "Le portail Orion doit exporter les factures au format CSV UTF-8 avec séparateur point-virgule.",
+            "source": "générique"
+          },
+          {
+            "titre": "Champs obligatoires",
+            "texte": "Chaque facture comporte un identifiant unique, une date et un montant en dirhams.",
+            "source": "générique"
+          },
+          {
+            "titre": "Accès restreint",
+            "texte": "Seuls les comptables autorisés peuvent exporter les données.",
+            "source": "générique"
+          }
+        ]
+      }
+    }
+  }
+}

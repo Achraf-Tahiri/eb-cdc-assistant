@@ -1,0 +1,19 @@
+# Le nom de projet est FIXÉ ici : Docker retrouvera toujours le même
+# conteneur (ebcdc-db) et le même volume de données (ebcdc_pgdata),
+# quel que soit le nom ou l'emplacement du dossier du projet.
+name: eb-cdc-assistant
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: ebcdc-db
+    environment:
+      POSTGRES_DB: ebcdc
+      POSTGRES_USER: ebcdc
+      POSTGRES_PASSWORD: ebcdc
+    ports:
+      - "5433:5432"
+    volumes:
+      - ebcdc_pgdata:/var/lib/postgresql/data
+volumes:
+  ebcdc_pgdata:

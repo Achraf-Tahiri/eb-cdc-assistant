@@ -1,0 +1,8 @@
+PASS ingestion texte + embeddings + insertion pgvector
+PASS recherche sémantique : source attendue retrouvée
+PASS extraction fichier audit.txt
+PASS extraction fichier audit.md
+Jobs soumis : [["COMPLETENESS_CHECK", "ef82fd57-8d7b-43a1-af29-642557708042"], ["SUGGESTION", "a047f906-8921-46ff-9de3-e45ca4af9c2f"]]
+PASS COMPLETENESS_CHECK : DONE, structure du résultat valide
+PASS SUGGESTION : DONE, structure du résultat valide
+Résultats : /tmp/ebcdc-audit-20260909/rag-results.json
